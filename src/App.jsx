@@ -26,6 +26,22 @@ import {
   Send,
   Check
 } from 'lucide-react';
+const API = 'http://localhost:3000';
+
+const fromServer = (r) => ({
+  id: r.id,
+  name: r.name,
+  phone: r.phone,
+  source: r.source,
+  status: r.status,
+  checkIn: r.check_in || '',
+  checkOut: r.check_out || '',
+  guests: r.guests,
+  roomRequirement: r.room || '',
+  followUpDate: r.follow_up || '',
+  notes: r.notes || '',
+  createdAt: (r.created_at || '').slice(0, 10),
+});
 
 const LEAD_SOURCES = [
   'WhatsApp',
@@ -216,18 +232,7 @@ const buildWhatsAppLink = (lead) => {
 };
 
 export default function App() {
-  const [leads, setLeads] = useState(() => {
-    try {
-      const saved = localStorage.getItem('grand_crest_crm_leads_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to read local storage', e);
-    }
-    return INITIAL_LEADS;
-  });
+ const [leads, setLeads] = useState([]);
 
   const [activePage, setActivePage] = useState('dashboard');
   const [isWebsiteView, setIsWebsiteView] = useState(false);
@@ -263,12 +268,11 @@ export default function App() {
   const [websiteSubmitted, setWebsiteSubmitted] = useState(false);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('grand_crest_crm_leads_v1', JSON.stringify(leads));
-    } catch (e) {
-      console.error('Failed to save to local storage', e);
-    }
-  }, [leads]);
+  fetch(`${API}/enquiries`)
+    .then((res) => res.json())
+    .then((rows) => setLeads(rows.map(fromServer)))
+    .catch((err) => console.error('Could not load enquiries', err));
+}, []);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -353,85 +357,161 @@ export default function App() {
   }, [leads]);
 
   const handleStatusChange = (id, newStatus) => {
-    setLeads((prev) =>
-      prev.map((lead) => (lead.id === id ? { ...lead, status: newStatus } : lead))
-    );
-    showToast(`Status updated to "${newStatus}"`);
-  };
-
+  fetch(`${API}/enquiries/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: newStatus }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('Update failed');
+      setLeads((prev) =>
+        prev.map((lead) => (lead.id === id ? { ...lead, status: newStatus } : lead))
+      );
+      showToast(`Status updated to "${newStatus}"`);
+    })
+    .catch(() => showToast('Could not update the status.'));
+};
   const handleFollowUpDateChange = (id, newDate) => {
-    setLeads((prev) =>
-      prev.map((lead) => (lead.id === id ? { ...lead, followUpDate: newDate } : lead))
-    );
-    showToast(newDate ? `Follow-up scheduled for ${formatDisplayDate(newDate)}` : 'Follow-up date cleared');
+  fetch(`${API}/enquiries/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ follow_up: newDate }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('Update failed');
+      setLeads((prev) =>
+        prev.map((lead) => (lead.id === id ? { ...lead, followUpDate: newDate } : lead))
+      );
+      showToast(
+        newDate
+          ? `Follow-up scheduled for ${formatDisplayDate(newDate)}`
+          : 'Follow-up date cleared'
+      );
+    })
+    .catch(() => showToast('Could not update the follow-up date.'));
   };
+const handleAddManualLead = (e) => {
+  e.preventDefault();
+  if (!newLeadForm.name.trim() || !newLeadForm.phone.trim()) return;
 
-  const handleAddManualLead = (e) => {
-    e.preventDefault();
-    if (!newLeadForm.name.trim() || !newLeadForm.phone.trim()) return;
-
-    const created = {
-      ...newLeadForm,
-      id: `LD-${Math.floor(1000 + Math.random() * 9000)}`,
+  fetch(`${API}/enquiries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: newLeadForm.name.trim(),
+      phone: newLeadForm.phone.trim(),
+      source: newLeadForm.source,
+      status: newLeadForm.status,
+      check_in: newLeadForm.checkIn,
+      check_out: newLeadForm.checkOut,
       guests: Number(newLeadForm.guests) || 1,
-      createdAt: todayStr,
-    };
+      room: newLeadForm.roomRequirement,
+      follow_up: newLeadForm.followUpDate,
+      notes: newLeadForm.notes,
+    }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('Save failed');
+      return res.json();
+    })
+    .then((saved) => {
+      setLeads((prev) => [fromServer(saved), ...prev]);
+      setNewLeadForm({
+        name: '',
+        phone: '',
+        source: 'Instagram',
+        checkIn: getRelativeDate(7),
+        checkOut: getRelativeDate(9),
+        guests: 2,
+        roomRequirement: '1 Deluxe Room',
+        status: 'New Enquiry',
+        followUpDate: getRelativeDate(1),
+        notes: '',
+      });
+      showToast(`Enquiry for ${saved.name} added to CRM!`);
+      setActivePage('leads');
+    })
+    .catch(() => showToast('Could not save the enquiry.'));
+};
 
-    setLeads((prev) => [created, ...prev]);
-    setNewLeadForm({
-      name: '',
-      phone: '',
-      source: 'Instagram',
-      checkIn: getRelativeDate(7),
-      checkOut: getRelativeDate(9),
-      guests: 2,
-      roomRequirement: '1 Deluxe Room',
-      status: 'New Enquiry',
-      followUpDate: getRelativeDate(1),
-      notes: '',
-    });
-    showToast(`Enquiry for ${created.name} added to CRM!`);
-    setActivePage('leads');
-  };
+   
+ const handleWebsiteSubmit = (e) => {
+  e.preventDefault();
+  if (!websiteForm.name.trim() || !websiteForm.phone.trim()) return;
 
-  const handleWebsiteSubmit = (e) => {
-    e.preventDefault();
-    if (!websiteForm.name.trim() || !websiteForm.phone.trim()) return;
+  const message = websiteForm.message.trim();
 
-    const webLead = {
-      id: `LD-${Math.floor(1000 + Math.random() * 9000)}`,
+  fetch(`${API}/enquiries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       name: websiteForm.name.trim(),
       phone: websiteForm.phone.trim(),
       source: 'Website',
-      checkIn: websiteForm.checkIn,
-      checkOut: websiteForm.checkOut,
-      guests: Number(websiteForm.guests) || 2,
-      roomRequirement: websiteForm.message.trim() || 'Standard Website Enquiry',
       status: 'New Enquiry',
-      followUpDate: todayStr,
-      notes: websiteForm.message.trim() || 'Submitted via public hotel booking page.',
-      createdAt: todayStr,
-    };
+      check_in: websiteForm.checkIn,
+      check_out: websiteForm.checkOut,
+      guests: Number(websiteForm.guests) || 2,
+      room: message || 'Standard Website Enquiry',
+      follow_up: todayStr,
+      notes: message || 'Submitted via public hotel booking page.',
+    }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('Save failed');
+      return res.json();
+    })
+    .then((saved) => {
+      setLeads((prev) => [fromServer(saved), ...prev]);
+      setWebsiteSubmitted(true);
+      showToast(`New website enquiry from ${saved.name} synced to CRM!`);
+    })
+    .catch(() => showToast('Could not send your enquiry. Please try again.'));
+};
 
-    setLeads((prev) => [webLead, ...prev]);
-    setWebsiteSubmitted(true);
-    showToast(`New website enquiry from ${webLead.name} synced to CRM!`);
-  };
+
 
   const handleSaveEdit = (e) => {
     e.preventDefault();
     if (!editingLead) return;
-    setLeads((prev) =>
-      prev.map((l) => (l.id === editingLead.id ? { ...editingLead, guests: Number(editingLead.guests) || 1 } : l))
-    );
-    setEditingLead(null);
-    showToast('Customer enquiry updated.');
+
+    fetch(`${API}/enquiries/${editingLead.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: editingLead.name,
+        phone: editingLead.phone,
+        source: editingLead.source,
+        status: editingLead.status,
+        check_in: editingLead.checkIn,
+        check_out: editingLead.checkOut,
+        guests: Number(editingLead.guests) || 1,
+        room: editingLead.roomRequirement,
+        follow_up: editingLead.followUpDate,
+        notes: editingLead.notes,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Update failed');
+        return res.json();
+      })
+      .then((saved) => {
+        setLeads((prev) => prev.map((l) => (l.id === saved.id ? fromServer(saved) : l)));
+        setEditingLead(null);
+        showToast('Customer enquiry updated.');
+      })
+      .catch(() => showToast('Could not update the enquiry.'));
   };
 
   const handleDeleteLead = (id) => {
-    setLeads((prev) => prev.filter((l) => l.id !== id));
-    showToast('Enquiry removed.');
-  };
+  fetch(`${API}/enquiries/${id}`, { method: 'DELETE' })
+    .then((res) => {
+      if (!res.ok) throw new Error('Delete failed');
+      setLeads((prev) => prev.filter((l) => l.id !== id));
+      showToast('Enquiry removed.');
+    })
+    .catch(() => showToast('Could not delete the enquiry.'));
+};
 
   const handleResetDemo = () => {
     setLeads(INITIAL_LEADS);
