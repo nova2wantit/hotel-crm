@@ -26,7 +26,7 @@ import {
   Send,
   Check
 } from 'lucide-react';
-const API = 'http://localhost:3000';
+const API = 'https://hotel-crm-server.onrender.com';
 
 const fromServer = (r) => ({
   id: r.id,
